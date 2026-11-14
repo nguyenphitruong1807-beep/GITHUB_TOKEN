@@ -1,1 +1,245 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Pre-processor cho Claude & Gemini</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen p-4 sm:p-6 font-sans">
+  <div class="max-w-5xl mx-auto space-y-5">
+    <!-- Header -->
+    <div class="border-b border-zinc-800 pb-4">
+      <h1 class="text-xl sm:text-2xl font-bold text-amber-400">Video Layer & Timeline Extractor</h1>
+      <p class="text-xs sm:text-sm text-zinc-400 mt-1">
+        Tự động cắt cảnh, quét OCR gốc, bắt nhịp SFX trên Kaggle GPU và đóng gói lưới ảnh sắc nét.
+      </p>
+    </div>
+
+    <!-- Thanh trạng thái Auto-Connect Kaggle qua Gist -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between bg-zinc-900 border border-zinc-800 rounded-xl p-4 gap-3">
+      <div class="flex items-center gap-3 overflow-hidden">
+        <span id="statusDot" class="w-3 h-3 rounded-full bg-yellow-500 animate-pulse shrink-0"></span>
+        <div class="truncate">
+          <div id="statusText" class="text-sm font-semibold text-zinc-200">Đang tự động tìm máy chủ Kaggle GPU...</div>
+          <div id="endpointDisplay" class="text-xs text-zinc-500 font-mono truncate">Gist ID: 068cb12b52d09532eedd4487a2dc0395</div>
+        </div>
+      </div>
+      <button
+        onclick="autoConnectKaggle()"
+        class="w-full sm:w-auto shrink-0 text-xs bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-medium px-4 py-2.5 rounded-lg transition text-center"
+      >
+        Làm mới kết nối
+      </button>
+    </div>
+
+    <!-- Khu vực Upload & Điều khiển -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 sm:p-5 space-y-4">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div class="sm:col-span-2">
+          <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+            Endpoint URL (Tự động đồng bộ)
+          </label>
+          <input
+            id="endpointInput"
+            type="text"
+            placeholder="Đang chờ đồng bộ tự động từ Kaggle..."
+            class="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm text-zinc-100 font-mono focus:outline-none focus:border-amber-400"
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+            Số Keyframe tối đa
+          </label>
+          <select
+            id="maxShotsSelect"
+            class="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm text-zinc-100 focus:outline-none focus:border-amber-400"
+          >
+            <option value="8">8 Keyframes (2 bảng ảnh)</option>
+            <option value="12">12 Keyframes (3 bảng ảnh)</option>
+            <option value="16" selected>16 Keyframes (4 bảng ảnh)</option>
+            <option value="20">20 Keyframes (5 bảng ảnh)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="flex flex-col sm:flex-row gap-3 items-center pt-1">
+        <input
+          id="videoInput"
+          type="file"
+          accept="video/mp4,video/quicktime,video/webm"
+          class="block w-full text-xs sm:text-sm text-zinc-400 file:mr-3 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-xs sm:file:text-sm file:font-semibold file:bg-zinc-800 file:text-amber-400 hover:file:bg-zinc-700 cursor-pointer"
+        />
+        <button
+          id="runBtn"
+          onclick="processVideo()"
+          class="w-full sm:w-auto whitespace-nowrap bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold px-6 py-3 rounded-lg text-sm transition"
+        >
+          Phân tích & Cắt lớp Video
+        </button>
+      </div>
+
+      <div id="statusBox" class="hidden text-xs sm:text-sm text-amber-300 bg-amber-950/40 border border-amber-800/50 rounded-lg p-3">
+        ⏳ Đang gửi video lên Kaggle GPU T4 và bóc tách lớp... (Khoảng 10 - 25 giây)
+      </div>
+    </div>
+
+    <!-- Kết quả -->
+    <div id="resultSection" class="hidden space-y-5">
+      <!-- Lưới ảnh -->
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 sm:p-5 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+          <h2 class="text-base sm:text-lg font-semibold text-zinc-100">1. Bảng ảnh Contact Sheet sắc nét</h2>
+          <span class="text-xs text-zinc-400">Bấm tải ảnh về máy rồi đính kèm vào Claude / Gemini</span>
+        </div>
+        <div id="sheetsContainer" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+      </div>
+
+      <!-- Prompt + JSON Manifest -->
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 sm:p-5 space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-base sm:text-lg font-semibold text-zinc-100">2. Prompt + Timeline JSON</h2>
+          <button
+            onclick="copyPayload()"
+            id="copyBtn"
+            class="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2 rounded-lg text-xs transition shrink-0"
+          >
+            Copy toàn bộ gửi AI
+          </button>
+        </div>
+        <textarea
+          id="outputPayload"
+          rows="14"
+          readonly
+          class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3.5 font-mono text-xs text-emerald-300 focus:outline-none"
+        ></textarea>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const GIST_ID = "068cb12b52d09532eedd4487a2dc0395";
+
+    async function autoConnectKaggle() {
+      const dot = document.getElementById("statusDot");
+      const text = document.getElementById("statusText");
+      const display = document.getElementById("endpointDisplay");
+      const inputEl = document.getElementById("endpointInput");
+
+      dot.className = "w-3 h-3 rounded-full bg-yellow-500 animate-pulse shrink-0";
+      text.innerText = "Đang kiểm tra kết nối Kaggle GPU...";
+
+      try {
+        const gistRes = await fetch(`https://api.github.com/gists/${GIST_ID}?t=${Date.now()}`);
+        if (!gistRes.ok) throw new Error("Không đọc được Gist API");
+
+        const gistData = await gistRes.json();
+        const fileObj = gistData.files["endpoint.json"] || Object.values(gistData.files)[0];
+        const config = JSON.parse(fileObj.content);
+
+        if (!config.url) throw new Error("Gist chưa có URL (Hãy bấm Run trên Kaggle)");
+
+        const cleanBaseUrl = config.url.replace(/\/+$/, "");
+        const healthRes = await fetch(`${cleanBaseUrl}/health`, { method: "GET" });
+        if (!healthRes.ok) throw new Error("Kaggle Server không phản hồi");
+
+        const analyzeUrl = `${cleanBaseUrl}/analyze`;
+        inputEl.value = analyzeUrl;
+        dot.className = "w-3 h-3 rounded-full bg-emerald-400 shrink-0";
+        text.innerText = "Đã kết nối tự động với Kaggle GPU (Online)";
+        display.innerText = analyzeUrl;
+      } catch (err) {
+        dot.className = "w-3 h-3 rounded-full bg-red-500 shrink-0";
+        text.innerText = "Chưa kết nối được Kaggle GPU (Offline)";
+        display.innerText = err.message;
+      }
+    }
+
+    async function processVideo() {
+      const baseEndpoint = document.getElementById("endpointInput").value.trim();
+      const maxShots = document.getElementById("maxShotsSelect").value;
+      const fileInput = document.getElementById("videoInput");
+      const statusBox = document.getElementById("statusBox");
+      const resultSection = document.getElementById("resultSection");
+      const runBtn = document.getElementById("runBtn");
+
+      if (!baseEndpoint) {
+        alert("Chưa có Endpoint URL! Hãy bật Kaggle Notebook rồi bấm Làm mới kết nối.");
+        return;
+      }
+      if (!fileInput.files.length) {
+        alert("Vui lòng chọn một file video!");
+        return;
+      }
+
+      const endpoint = `${baseEndpoint}?max_shots=${maxShots}`;
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+
+      statusBox.classList.remove("hidden");
+      resultSection.classList.add("hidden");
+      runBtn.disabled = true;
+      runBtn.classList.add("opacity-50");
+
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!res.ok) {
+          throw new Error("Lỗi từ server: " + res.statusText);
+        }
+
+        const data = await res.json();
+        renderResults(data);
+      } catch (err) {
+        alert("Có lỗi xảy ra: " + err.message);
+      } finally {
+        statusBox.classList.add("hidden");
+        runBtn.disabled = false;
+        runBtn.classList.remove("opacity-50");
+      }
+    }
+
+    function renderResults(data) {
+      const sheetsContainer = document.getElementById("sheetsContainer");
+      const outputPayload = document.getElementById("outputPayload");
+      const resultSection = document.getElementById("resultSection");
+
+      sheetsContainer.innerHTML = "";
+      data.contact_sheets.forEach((b64, index) => {
+        const imgUrl = "data:image/jpeg;base64," + b64;
+        const card = document.createElement("div");
+        card.className = "bg-zinc-950 border border-zinc-800 rounded-lg p-3 space-y-2";
+        card.innerHTML = `
+          <img src="${imgUrl}" class="w-full rounded border border-zinc-800" />
+          <div class="flex justify-between items-center pt-1">
+            <span class="text-xs text-zinc-400 font-medium">Bảng #${index + 1}</span>
+            <a href="${imgUrl}" download="contact_sheet_${index + 1}.jpg"
+               class="text-xs bg-amber-400 hover:bg-amber-300 text-zinc-950 px-3 py-1.5 rounded font-bold">
+              Tải ảnh .JPG
+            </a>
+          </div>
+        `;
+        sheetsContainer.appendChild(card);
+      });
+
+      const combinedText = data.ai_prompt + "\n\n```json\n" + JSON.stringify(data.manifest, null, 2) + "\n```";
+      outputPayload.value = combinedText;
+      resultSection.classList.remove("hidden");
+    }
+
+    function copyPayload() {
+      const textarea = document.getElementById("outputPayload");
+      navigator.clipboard.writeText(textarea.value);
+      const btn = document.getElementById("copyBtn");
+      btn.innerText = "Đã Copy!";
+      setTimeout(() => (btn.innerText = "Copy toàn bộ gửi AI"), 2000);
+    }
+
+    window.addEventListener("DOMContentLoaded", autoConnectKaggle);
+  </script>
+</body>
+</html>
 
